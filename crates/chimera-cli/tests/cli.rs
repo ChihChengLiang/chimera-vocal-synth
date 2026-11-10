@@ -494,3 +494,25 @@ fn render_creature_notes_records_a_creature_telemetry_file() {
     let m: Vec<f32> = (0..frames).map(|i| f(i, mouth_at)).collect();
     assert!(m.iter().cloned().fold(0.0, f32::max) - m.iter().cloned().fold(1.0, f32::min) > 0.3, "the mouth never opens: {m:?}");
 }
+
+#[test]
+fn render_beatbox_song_can_sing_first_and_turn_beatboxer_on_the_same_voice() {
+    let melody = tmp("sing-then-beat-melody.json");
+    std::fs::write(&melody, r#"{"bpm": 80, "lang": "tailo", "lyrics": "thinn kng", "notes": [[66, 1], [62, 1]]}"#).unwrap();
+    let json = tmp("sing-then-beat.json");
+    std::fs::write(&json, format!(r#"{{"bpm": 100, "firstHit": 5.0, "tail": 0.5, "sing": "{melody}", "sections": [["B . . .", 1]]}}"#)).unwrap();
+    let (stem, tele) = (tmp("sing-then-beat"), tmp("sing-then-beat.tele"));
+    chimera(&["render", "beatbox-song", &json, &stem, "female", "--tele", &tele]);
+    let x = wav_samples(&format!("{stem}.wav"));
+    let at = |t: f64| (t * 48000.0) as usize;
+    let peak = |a: f64, b: f64| x[at(a)..at(b)].iter().map(|v| v.unsigned_abs()).max().unwrap();
+    assert!(peak(0.3, 3.0) > 3000, "the melody doesn't sound");
+    assert!(peak(3.6, 4.7) < 600, "the voice is not still between the melody and the beat");
+    let hit = x[at(4.7)..].iter().position(|v| v.unsigned_abs() > 800).unwrap() as f64 / 48000.0 + 4.7;
+    assert!((hit - 5.0).abs() < 0.03, "the first kick sounds at {hit} s, not 5.0 s");
+    // a beat that starts before the melody has ended is refused, not played over it
+    std::fs::write(&json, format!(r#"{{"bpm": 100, "firstHit": 1.0, "sing": "{melody}", "sections": [["B . . .", 1]]}}"#)).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_chimera")).args(["render", "beatbox-song", &json, &stem, "female"]).output().unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("firstHit"));
+}

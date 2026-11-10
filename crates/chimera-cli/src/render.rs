@@ -481,31 +481,9 @@ fn render_tracked(v: &mut HumanVoice, out: &mut [f32], artic: bool, tele: bool) 
 /// A melody from a JSON file: `{"bpm", "lyrics", "notes": [[midi, beats], ...], "vibrato"?}`.
 /// One lyric syllable per sounding note; a note with midi <= 0 is a rest, which splits the
 /// melody into phrases planned separately on one voice.
-/// `render notes <in.json> <out> [body] [--artic tracks.json] [--tele voice.tele]`: `--artic` also
-/// writes the articulators over time (`{"rate", "body", "keys", "frames"}`), to animate a face in
-/// sync; `--tele` writes the voice's whole telemetry over time (see `TeleRecorder`), which the
-/// app's duet page replays on a 3D head.
-pub fn notes(ctx: &Ctx, a: &[String]) -> Result<(), String> {
-    let mut artic_out: Option<String> = None;
-    let mut tele_out: Option<String> = None;
-    let mut rest = Vec::new();
-    let mut it = a.iter();
-    while let Some(x) = it.next() {
-        if x == "--artic" {
-            artic_out = Some(it.next().ok_or("--artic needs a file")?.clone());
-        } else if x == "--tele" {
-            tele_out = Some(it.next().ok_or("--tele needs a file")?.clone());
-        } else {
-            rest.push(x.clone());
-        }
-    }
-    let a = &rest[..];
-    let input = a.first().ok_or("render notes <in.json> <out> [male|female|child] [--artic tracks.json] [--tele voice.tele]")?;
-    let out_name = wav_name(arg(a, 1, "out/notes"));
-    let body_name = arg(a, 2, "male");
-    let b = body(body_name)?;
-    let text = std::fs::read_to_string(input).map_err(|e| format!("{input}: {e}"))?;
-    let j: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("{input}: {e}"))?;
+/// Schedule a melody file (`{"bpm", "lyrics", "notes", "t0"?, "vibrato"?, "lang"?}`) on `v`; returns when its
+/// last phrase ends (s) and how many notes sound. Shared by `render notes` and `render beatbox-song`.
+fn sing_into(v: &mut HumanVoice, j: &serde_json::Value, body_name: &str) -> Result<(f64, usize), String> {
     let bpm = j["bpm"].as_f64().ok_or("bpm missing")?;
     let vibrato = j["vibrato"].as_f64().unwrap_or(35.0);
     let raw: Vec<[f64; 2]> = serde_json::from_value(j["notes"].clone()).map_err(|e| format!("notes: {e}"))?;
@@ -523,7 +501,6 @@ pub fn notes(ctx: &Ctx, a: &[String]) -> Result<(), String> {
     }
     let t0 = j["t0"].as_f64().unwrap_or(0.3);
     let beat = 60.0 / bpm;
-    let mut v = HumanVoice::new(FS, b, 2);
     let first = raw.iter().find(|n| n[0] > 0.0).ok_or("no notes")?;
     v.set_source(&SourcePatch {
         f0: Some(midi_to_hz(first[0])),
@@ -552,11 +529,41 @@ pub fn notes(ctx: &Ctx, a: &[String]) -> Result<(), String> {
             phrase.push(SungNote { midi: n[0], beats: n[1], syl: syl[k].clone() });
             k += 1;
         } else {
-            flush(&mut phrase, start, &mut v, &mut end);
+            flush(&mut phrase, start, v, &mut end);
         }
         t += n[1] * beat;
     }
-    flush(&mut phrase, start, &mut v, &mut end);
+    flush(&mut phrase, start, v, &mut end);
+    Ok((end, sounding))
+}
+
+/// `render notes <in.json> <out> [body] [--artic tracks.json] [--tele voice.tele]`: `--artic` also
+/// writes the articulators over time (`{"rate", "body", "keys", "frames"}`), to animate a face in
+/// sync; `--tele` writes the voice's whole telemetry over time (see `TeleRecorder`), which the
+/// app's duet page replays on a 3D head.
+pub fn notes(ctx: &Ctx, a: &[String]) -> Result<(), String> {
+    let mut artic_out: Option<String> = None;
+    let mut tele_out: Option<String> = None;
+    let mut rest = Vec::new();
+    let mut it = a.iter();
+    while let Some(x) = it.next() {
+        if x == "--artic" {
+            artic_out = Some(it.next().ok_or("--artic needs a file")?.clone());
+        } else if x == "--tele" {
+            tele_out = Some(it.next().ok_or("--tele needs a file")?.clone());
+        } else {
+            rest.push(x.clone());
+        }
+    }
+    let a = &rest[..];
+    let input = a.first().ok_or("render notes <in.json> <out> [male|female|child] [--artic tracks.json] [--tele voice.tele]")?;
+    let out_name = wav_name(arg(a, 1, "out/notes"));
+    let body_name = arg(a, 2, "male");
+    let b = body(body_name)?;
+    let text = std::fs::read_to_string(input).map_err(|e| format!("{input}: {e}"))?;
+    let j: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("{input}: {e}"))?;
+    let mut v = HumanVoice::new(FS, b, 2);
+    let (end, sounding) = sing_into(&mut v, &j, body_name)?;
     let n = js_round(FS * (end + 0.4)) as usize;
     let mut out = vec![0f32; n];
     let (frames, rec) = if artic_out.is_some() || tele_out.is_some() {
@@ -582,7 +589,9 @@ pub fn notes(ctx: &Ctx, a: &[String]) -> Result<(), String> {
 /// `render beatbox-song <in.json> <out> [body] [--tele voice.tele]`: several patterns one after
 /// another on one voice, the first hit of the first at `firstHit` seconds and each next pattern's
 /// first hit exactly where the one before ends (so beats and a mix made on a grid line up). Before
-/// `firstHit` the voice is silent; `--tele` records it from sample 0, for a duet page's head.
+/// `firstHit` the voice is silent, or, with `"sing": "melody.json"`, sings that melody (as `render
+/// notes` would) and then turns beatboxer on the same voice; `--tele` records it from sample 0,
+/// for a duet page's head.
 pub fn beatbox_song(ctx: &Ctx, a: &[String]) -> Result<(), String> {
     let mut tele_out: Option<String> = None;
     let mut rest = Vec::new();
@@ -624,15 +633,38 @@ pub fn beatbox_song(ctx: &Ctx, a: &[String]) -> Result<(), String> {
     }
     let end = at;
     let mut v = HumanVoice::new(FS, b, 2);
-    v.set_articulation(&beat_ready(body_name.into()), None);
-    v.set_source(&SourcePatch { f0: Some(100.0), voiced: Some(true), pressure: Some(8.0), ..Default::default() });
-    v.set_gate(0.0);
+    // the beatboxer's ready posture and breath; after a sung melody, taken up once it has ended
+    let ready = |v: &mut HumanVoice| {
+        v.set_articulation(&beat_ready(body_name.into()), None);
+        v.set_source(&SourcePatch { f0: Some(100.0), voiced: Some(true), pressure: Some(8.0), ..Default::default() });
+        v.set_gate(0.0);
+    };
+    let sung_until = match j["sing"].as_str() {
+        Some(path) => {
+            let text = std::fs::read_to_string(path).map_err(|e| format!("{path}: {e}"))?;
+            let m: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("{path}: {e}"))?;
+            let (until, _) = sing_into(&mut v, &m, body_name)?;
+            if first_hit < until + 0.3 {
+                return Err(format!("the melody ends at {until:.2} s; firstHit {first_hit} leaves it no room to turn to the beat"));
+            }
+            Some(until)
+        }
+        None => {
+            ready(&mut v);
+            None
+        }
+    };
+    let mut turned = sung_until.is_none();
     let total = js_round((end + tail) * FS) as usize;
     let mut out = vec![0f32; total];
     let mut rec = if tele_out.is_some() { Some(TeleRecorder::new(&mut v)) } else { None };
     let (mut k, mut stopped) = (0usize, false);
     for (bi, block) in out.chunks_mut(128).enumerate() {
         let clock = v.clock;
+        if !turned && clock >= sung_until.unwrap_or(0.0) + 0.1 {
+            ready(&mut v);
+            turned = true;
+        }
         // a section begins when its first hit comes within the sequencer's horizon; the last ends it
         while k < sections.len() && clock >= starts[k] - BeatPlayer::HORIZON {
             seq.set_steps(&sections[k].0);
