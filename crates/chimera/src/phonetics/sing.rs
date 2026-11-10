@@ -24,7 +24,9 @@ pub use crate::math::midi_to_hz;
 
 /// sung consonants are a little shorter than spoken ones
 fn cdur(ipa: &str, body: BodyMix, k: f64) -> f64 {
-    phoneme(ipa, body).map_or(0.07, |d| d.dur) * k
+    // a burst of aspiration after the release takes time the vowel would otherwise lose
+    let asp = if super::inventory::split_mods(ipa).1.aspirated { 0.04 } else { 0.0 };
+    phoneme(ipa, body).map_or(0.07, |d| d.dur) * k + asp
 }
 
 fn consonants(segs: &[Segment], body: BodyMix, k: f64) -> Vec<Segment> {

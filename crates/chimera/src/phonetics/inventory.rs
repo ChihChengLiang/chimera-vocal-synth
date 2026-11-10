@@ -245,6 +245,7 @@ fn by_ipa(ipa: &str) -> Option<&'static PhonemeDef> {
 /// presets the calibrated targets blend by the body's weights. Allocates nothing (the definition
 /// is `Copy`).
 pub fn phoneme(ipa: &str, body: BodyMix) -> Option<PhonemeDef> {
+    let ipa = split_mods(ipa).0;
     let p = by_ipa(ipa)?;
     let of = |b: BodyName| match CAL.get(b.as_str()).and_then(|t| t.get(ipa)) {
         Some(cal) => {
@@ -260,6 +261,34 @@ pub fn phoneme(ipa: &str, body: BodyMix) -> Option<PhonemeDef> {
         None => ArticPatch::blend(&body.weights().map(|(b, w)| (w, of(b)))),
     };
     Some(out)
+}
+
+/// Suffixes a segment's symbol may carry (Hokkien and other languages that contrast what English
+/// leaves to a rule). A segment with none sounds exactly as before.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Mods {
+    /// `ʰ`: a voiceless stop or affricate with a long burst of aspiration (VOT ~ 80 ms)
+    pub aspirated: bool,
+    /// `˭`: a voiceless stop or affricate with none, even before a vowel (English aspirates there)
+    pub plain: bool,
+    /// `ⁿ`: a nasalised vowel (the velum lowered through it)
+    pub nasal: bool,
+}
+
+/// `"tsʰ"` → `("ts", aspirated)`; the base symbol and its modifiers.
+pub fn split_mods(ipa: &str) -> (&str, Mods) {
+    let mut m = Mods::default();
+    let mut base = ipa;
+    while let Some(c) = base.chars().next_back() {
+        match c {
+            'ʰ' => m.aspirated = true,
+            '˭' => m.plain = true,
+            'ⁿ' => m.nasal = true,
+            _ => break,
+        }
+        base = &base[..base.len() - c.len_utf8()];
+    }
+    (base, m)
 }
 
 pub fn consonants() -> &'static [PhonemeDef] {

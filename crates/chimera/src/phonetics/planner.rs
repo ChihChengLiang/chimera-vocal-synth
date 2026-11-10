@@ -6,7 +6,7 @@
 //! sequencer) builds into a caller's `Vec` and allocates nothing once it has capacity.
 
 use super::durations::{SegInfo, klatt_durations};
-use super::inventory::{Glottal, Manner, PhonemeDef, Voicing, phoneme};
+use super::inventory::{Glottal, Manner, Mods, PhonemeDef, Voicing, phoneme, split_mods};
 use super::{Intonation, Plan, PlannedSegment, Segment};
 use crate::anatomy::human::{ArticKey, ArticPatch, BodyMix, BodyName};
 use crate::control::score::{ControlKey, Gesture, Targets};
@@ -170,6 +170,7 @@ struct Seg<'a> {
     def: Option<PhonemeDef>,
     vowel: Option<ArticPatch>,
     glide_from: bool,
+    mods: Mods,
 }
 
 #[derive(Clone, Copy)]
@@ -181,6 +182,15 @@ struct Span {
 pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
     let rate = o.rate.unwrap_or(1.0);
     let body = o.body;
+    // symbols may carry modifiers (`tsʰ`, `p˭`, `aⁿ`); everything below sees the base symbol
+    let mods: Vec<Mods> = input.iter().map(|s| split_mods(&s.ipa).1).collect();
+    let bare: Vec<Segment>;
+    let input = if mods.iter().any(|m| *m != Mods::default()) {
+        bare = input.iter().map(|s| Segment { ipa: split_mods(&s.ipa).0.to_string(), ..s.clone() }).collect();
+        &bare[..]
+    } else {
+        input
+    };
     // durations by the Klatt rules, on whole segments (diphthongs before they are split)
     let durs = klatt_durations(input, |s| {
         if is_vowel(&s.ipa, body) {
@@ -196,10 +206,10 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
             let base = durs[si];
             for (i, p) in parts.iter().enumerate() {
                 let dur = if parts.len() > 1 { base * (if i == 0 { 0.55 } else { 0.45 }) } else { base };
-                segs.push(Seg { ipa: p, dur: Some(dur), stress: s.stress, f0: s.f0, def: None, vowel: None, glide_from: i > 0 });
+                segs.push(Seg { ipa: p, dur: Some(dur), stress: s.stress, f0: s.f0, def: None, vowel: None, glide_from: i > 0, mods: mods[si] });
             }
         } else {
-            segs.push(Seg { ipa: &s.ipa, dur: Some(durs[si]), stress: s.stress, f0: s.f0, def: None, vowel: None, glide_from: false });
+            segs.push(Seg { ipa: &s.ipa, dur: Some(durs[si]), stress: s.stress, f0: s.f0, def: None, vowel: None, glide_from: false, mods: mods[si] });
         }
     }
     for s in segs.iter_mut() {
@@ -245,6 +255,10 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
         let r_in = js_max(0.03, 0.75 * (times[i].t0 - prev)) + 0.01;
         let r_out = js_max(0.03, 0.4 * (next - times[i].t1)) + 0.01;
         gestures.push(Gesture::new(times[i].t0, times[i].t1, r_in, r_out, 1.0, artic_targets(segs[i].vowel.as_ref().unwrap())).label(segs[i].ipa));
+        if segs[i].mods.nasal {
+            // a nasalised vowel: the velum lowers before it and stays down through it
+            gestures.push(Gesture::new(times[i].t0 - 0.03, times[i].t1, 0.05, 0.04, 4.0, one(ArticKey::Velum, 0.3)).label("nasal vowel"));
+        }
     }
     // utterance-initial/final consonants: lend them the nearest vowel's body posture
     // ---- consonant gestures
@@ -309,9 +323,10 @@ pub fn plan_utterance(input: &[Segment], o: &PlanOptions) -> Plan {
         } else if def.voicing == Voicing::Voiceless {
             if def.manner == Manner::Stop || def.manner == Manner::Affricate {
                 // aspirated when syllable-initial before a vowel and not after /s/ (English-like)
-                let aspirated = next_vowel && !prev_seg.is_some_and(|p| p.ipa == "s");
-                let vot = if aspirated { 0.05 / rate } else { 0.012 };
-                gestures.push(Gesture::new(t0 + 0.25 * dur, t1 + vot * 0.4, 0.035, if aspirated { 0.045 } else { 0.02 }, 6.0, one(ControlKey::ABDUCTION, if aspirated { 0.36 } else { 0.22 })).label("aspiration"));
+                let aspirated = if s.mods.aspirated { true } else if s.mods.plain { false } else { next_vowel && !prev_seg.is_some_and(|p| p.ipa == "s") };
+                let vot = if s.mods.aspirated { 0.085 / rate } else if aspirated { 0.05 / rate } else { 0.012 };
+                let open = if s.mods.aspirated { 0.42 } else if aspirated { 0.36 } else { 0.22 };
+                gestures.push(Gesture::new(t0 + 0.25 * dur, t1 + vot * 0.4, 0.035, if aspirated { 0.045 } else { 0.02 }, 6.0, one(ControlKey::ABDUCTION, open)).label("aspiration"));
             } else {
                 gestures.push(Gesture::new(t0 - 0.015, t1 + 0.005, 0.03, 0.03, 6.0, one(ControlKey::ABDUCTION, 0.3)).label("voiceless"));
             }

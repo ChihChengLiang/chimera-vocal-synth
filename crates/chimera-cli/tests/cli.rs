@@ -428,3 +428,25 @@ fn render_notes_tele_records_the_live_telemetry_without_changing_the_sound() {
     let a_lip = artic["frames"][96][lip].as_f64().unwrap(); // 0.96 s = 60 tele hops
     assert!((at(60, 11 + lip) as f64 - a_lip).abs() < 1e-3, "lipAp {} vs {a_lip}", at(60, 11 + lip));
 }
+
+fn wav_samples(path: &str) -> Vec<i16> {
+    let b = std::fs::read(path).unwrap();
+    b[44..].chunks_exact(2).map(|c| i16::from_le_bytes([c[0], c[1]])).collect()
+}
+
+#[test]
+fn render_notes_sings_taiwanese_from_tailo_lyrics() {
+    let json = tmp("tailo.json");
+    // thinn-kng, one note each: a nasalised vowel after an aspirated stop, then a syllabic velar nasal
+    std::fs::write(&json, r#"{"bpm": 80, "lang": "tailo", "lyrics": "thinn kng", "notes": [[66, 1], [62, 1]]}"#).unwrap();
+    let stem = tmp("tailo");
+    chimera(&["render", "notes", &json, &stem, "female"]);
+    let x = wav_samples(&format!("{stem}.wav"));
+    assert!(x.iter().map(|v| v.unsigned_abs()).max().unwrap() > 3000, "silent");
+    // a syllable it cannot read is an error naming it, not a silent skip
+    std::fs::write(&json, r#"{"bpm": 80, "lang": "tailo", "lyrics": "qxz", "notes": [[66, 1]]}"#).unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_chimera")).args(["render", "notes", &json, &stem]).output().unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("qxz"));
+}
+

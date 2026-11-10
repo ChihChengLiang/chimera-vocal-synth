@@ -509,8 +509,13 @@ pub fn notes(ctx: &Ctx, a: &[String]) -> Result<(), String> {
     let bpm = j["bpm"].as_f64().ok_or("bpm missing")?;
     let vibrato = j["vibrato"].as_f64().unwrap_or(35.0);
     let raw: Vec<[f64; 2]> = serde_json::from_value(j["notes"].clone()).map_err(|e| format!("notes: {e}"))?;
-    let g = g2p()?;
-    let syl = lyrics_to_syllables(j["lyrics"].as_str().ok_or("lyrics missing")?, &g);
+    let lyrics = j["lyrics"].as_str().ok_or("lyrics missing")?;
+    // "lang": "tailo" reads the lyrics as Taiwanese Hokkien (Tâi-lô); otherwise English
+    let syl = if j["lang"].as_str() == Some("tailo") {
+        chimera::phonetics::taigi::lyrics_to_syllables(lyrics)?
+    } else {
+        lyrics_to_syllables(lyrics, &g2p()?)
+    };
     let sounding = raw.iter().filter(|n| n[0] > 0.0).count();
     if syl.len() != sounding {
         return Err(format!("{} syllables for {sounding} notes: {}", syl.len(),

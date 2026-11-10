@@ -12,6 +12,7 @@ pub mod inventory;
 pub mod ipa;
 pub mod planner;
 pub mod sing;
+pub mod taigi;
 pub mod songs;
 pub mod syllables;
 pub mod vowel_data;
