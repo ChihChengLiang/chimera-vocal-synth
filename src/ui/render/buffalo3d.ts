@@ -229,18 +229,21 @@ export class Buffalo3D {
   /** a frame of recorded telemetry, or null: the head at rest */
   update(f: CreatureFrame | null, dt: number): void {
     this.time += dt;
-    const mouth = f ? Math.min(1, Math.max(0, f.params.mouth ?? 0.5)) : 0.05;
+    // the sound first: how loud the output is, against the loudest lately
+    const raw = f ? f.outRms : 0;
+    this.peak = Math.max(this.peak * 0.9995, raw, 1e-9);
+    const target = f ? Math.min(1, raw / this.peak) * Math.min(1, f.gate) : 0;
+    this.level += (target - this.level) * 0.35;
+    // the mouth the engine asked for opens only as far as the sound does: between moos the animal's
+    // resting parameters (a half-open mouth) would hang its jaw open in silence
+    const asked = f ? Math.min(1, Math.max(0, f.params.mouth ?? 0.5)) : 0.05;
+    const mouth = f ? Math.max(0.04, asked * Math.min(1, 0.1 + 1.4 * this.level)) : 0.04;
     const nasal = f ? Math.min(1, Math.max(0, f.params.nasal ?? 0.3)) : 0.1;
     const angle = 0.52 * mouth;
     // the jaw turns on its hinge
     const c = Math.cos(angle), s = Math.sin(angle);
     this.jaw.set(this.jawBase.map(([x, y, z]) => [HINGE[0] + (x - HINGE[0]) * c + (y - HINGE[1]) * s, HINGE[1] - (x - HINGE[0]) * s + (y - HINGE[1]) * c, z] as [number, number, number]));
     this.layoutAir(angle);
-    // the sound: how loud the output is, against the loudest lately
-    const raw = f ? f.outRms : 0;
-    this.peak = Math.max(this.peak * 0.9995, raw, 1e-9);
-    const target = f ? Math.min(1, raw / this.peak) * Math.min(1, f.gate) : 0;
-    this.level += (target - this.level) * 0.35;
     // the throat swells with the breath, and the whole figure brightens with the sound
     const swell = 1 + 0.05 * this.level;
     this.neck.set(this.neckBase.map(([x, y, z]) => [x, y, z * swell] as [number, number, number]));
