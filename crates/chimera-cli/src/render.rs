@@ -702,6 +702,168 @@ pub fn beatbox(ctx: &Ctx, a: &[String]) -> Result<(), String> {
 }
 
 /// A creature's sustained note and calls; level, stability and pitch.
+/// A creature's telemetry over time, for a duet page's creature head (`render creature-notes --tele`).
+///
+/// File layout, little-endian: `b"CCTL"`, u32 version, sampleRate, hop, frames, frameLen, jsonLen;
+/// then `jsonLen` bytes of JSON `{"id", "params": [keys], "source": [keys], "tubes": [[name, nodes], …]}`
+/// padded with spaces to a multiple of 4; then `frames` frames of `frameLen` f32s. A frame: gate,
+/// outRms, clock, the params in order, the source values in order, then for each tube its `nodes`
+/// areas and its `nodes` pressure RMS levels. Frame i is the state at sample i·hop (frame 0 before
+/// any sound); the RMS levels cover the hop before it, as for a voice's `.tele`.
+struct CreatureTeleRecorder {
+    t: chimera::creatures::voice::CreatureTelemetry,
+    data: Vec<f32>,
+    frames: u32,
+    frame_len: usize,
+    header: String,
+}
+
+impl CreatureTeleRecorder {
+    fn new(v: &mut CreatureVoice) -> Self {
+        let mut t = v.new_telemetry();
+        v.telemetry(&mut t);
+        let tubes: Vec<String> = t.tubes.iter().map(|x| format!("[\"{}\",{}]", x.name, x.areas.len())).collect();
+        let keys = |a: &[(&'static str, f64)]| a.iter().map(|(k, _)| format!("\"{k}\"")).collect::<Vec<_>>().join(",");
+        let header = format!("{{\"id\":\"{}\",\"params\":[{}],\"source\":[{}],\"tubes\":[{}]}}", t.id, keys(&t.params), keys(&t.source), tubes.join(","));
+        let frame_len = 3 + t.params.len() + t.source.len() + t.tubes.iter().map(|x| 2 * x.areas.len()).sum::<usize>();
+        let mut r = CreatureTeleRecorder { t, data: Vec::new(), frames: 0, frame_len, header };
+        r.push();
+        r
+    }
+
+    fn snap(&mut self, v: &mut CreatureVoice) {
+        v.telemetry(&mut self.t);
+        self.push();
+    }
+
+    fn push(&mut self) {
+        let t = &self.t;
+        let d = &mut self.data;
+        d.extend([t.gate, t.out_rms, t.clock].map(|x| x as f32));
+        d.extend(t.params.iter().map(|(_, x)| *x as f32));
+        d.extend(t.source.iter().map(|(_, x)| *x as f32));
+        for tube in &t.tubes {
+            d.extend_from_slice(&tube.areas);
+            d.extend_from_slice(&tube.rms);
+        }
+        self.frames += 1;
+        debug_assert_eq!(self.data.len(), self.frames as usize * self.frame_len);
+    }
+
+    fn bytes(&self) -> Vec<u8> {
+        let mut json = self.header.clone().into_bytes();
+        while json.len() % 4 != 0 {
+            json.push(b' ');
+        }
+        let mut b = Vec::with_capacity(28 + json.len() + 4 * self.data.len());
+        b.extend_from_slice(b"CCTL");
+        for x in [1u32, FS as u32, TELE_HOP as u32, self.frames, self.frame_len as u32, json.len() as u32] {
+            b.extend_from_slice(&x.to_le_bytes());
+        }
+        b.extend_from_slice(&json);
+        for x in &self.data {
+            b.extend_from_slice(&x.to_le_bytes());
+        }
+        b
+    }
+}
+
+/// `render creature-notes <creature> <in.json> <out>`: a creature plays a melody file (`bpm`, `t0`,
+/// `notes` [[midi, beats]…], midi <= 0 a rest). Each note is a call shaped to its length: a closed
+/// mouth and an open nose first, the mouth opening and the nose closing as the note rises, and the
+/// reverse at the end (a moo's "m-oo-m"); creatures without those parameters just change pitch.
+pub fn creature_notes(ctx: &Ctx, a: &[String]) -> Result<(), String> {
+    let mut tele_out: Option<String> = None;
+    let mut rest = Vec::new();
+    let mut it = a.iter();
+    while let Some(x) = it.next() {
+        if x == "--tele" {
+            tele_out = Some(it.next().ok_or("--tele needs a file")?.clone());
+        } else {
+            rest.push(x.clone());
+        }
+    }
+    let a = &rest[..];
+    let id = a.first().ok_or("render creature-notes <creature> <in.json> <out>")?;
+    let input = a.get(1).ok_or("render creature-notes <creature> <in.json> <out>")?;
+    let out_name = wav_name(arg(a, 2, "out/creature-notes"));
+    let def = creature_by_id(id).ok_or_else(|| format!("unknown creature {id}"))?;
+    let text = std::fs::read_to_string(input).map_err(|e| format!("{input}: {e}"))?;
+    let j: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("{input}: {e}"))?;
+    let bpm = j["bpm"].as_f64().ok_or("bpm missing")?;
+    let t0 = j["t0"].as_f64().unwrap_or(0.3);
+    let raw: Vec<[f64; 2]> = serde_json::from_value(j["notes"].clone()).map_err(|e| format!("notes: {e}"))?;
+    let pitch = def.params.iter().position(|p| p.role == Some(ParamRole::Pitch)).ok_or("creature has no pitch parameter")?;
+    let mouth = def.param_index("mouth");
+    let nasal = def.param_index("nasal");
+    let beat = 60.0 / bpm;
+    // (time, gate, parameters to set)
+    let mut events: Vec<(f64, Option<f64>, Vec<(usize, f64)>)> = Vec::new();
+    let mut t = t0;
+    let mut end = t0;
+    for n in &raw {
+        let d = n[1] * beat;
+        if n[0] > 0.0 {
+            let hz = midi_to_hz(n[0]);
+            let (on, off) = (t, t + d - 0.06);
+            let len = off - on;
+            let mut start = vec![(pitch, hz * 0.96)];
+            let mut open = vec![(pitch, hz * 1.03)];
+            let mut close = vec![(pitch, hz * 0.98)];
+            if let Some(m) = mouth {
+                start.push((m, 0.05));
+                open.push((m, 0.8));
+                close.push((m, 0.35));
+            }
+            if let Some(k) = nasal {
+                start.push((k, 0.9));
+                open.push((k, 0.1));
+                close.push((k, 0.6));
+            }
+            events.push((on - 0.12, None, start));
+            events.push((on, Some(1.0), Vec::new()));
+            events.push((on + js_min(0.25, 0.2 * len), None, open));
+            events.push((off - js_min(0.45, 0.3 * len), None, close));
+            events.push((off, Some(0.0), Vec::new()));
+            end = off;
+        }
+        t += d;
+    }
+    events.sort_by(|x, y| x.0.partial_cmp(&y.0).unwrap());
+    let mut v = CreatureVoice::new(def, FS, &[]);
+    let n = js_round((end + 1.2) * FS) as usize;
+    let mut out = vec![0f32; n];
+    let mut rec = if tele_out.is_some() { Some(CreatureTeleRecorder::new(&mut v)) } else { None };
+    let mut next = 0;
+    for (b, block) in out.chunks_mut(128).enumerate() {
+        let now = (b * 128) as f64 / FS;
+        while next < events.len() && events[next].0 <= now {
+            let (_, gate, params) = &events[next];
+            if !params.is_empty() {
+                v.set_params(params);
+            }
+            if let Some(g) = gate {
+                v.set_gate(*g);
+            }
+            next += 1;
+        }
+        v.render(block);
+        if let Some(r) = rec.as_mut()
+            && block.len() == 128
+            && (b + 1) * 128 % TELE_HOP == 0
+        {
+            r.snap(&mut v);
+        }
+    }
+    ctx.write_wav(&out_name, &out)?;
+    println!("{out_name}: {} s, peak {}, {} notes", fixed(n as f64 / FS, 2), fixed(peak(&out), 3), raw.iter().filter(|n| n[0] > 0.0).count());
+    if let (Some(path), Some(r)) = (&tele_out, rec) {
+        std::fs::write(path, r.bytes()).map_err(|e| format!("{path}: {e}"))?;
+        println!("{path}: {} telemetry frames every {TELE_HOP} samples", r.frames);
+    }
+    Ok(())
+}
+
 /// `render creature [creatureId] [outdir]`
 pub fn creature(ctx: &Ctx, a: &[String]) -> Result<(), String> {
     let id = arg(a, 0, "songbird");

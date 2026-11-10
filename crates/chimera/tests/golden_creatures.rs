@@ -3,6 +3,8 @@
 //! several block sizes (the output must not depend on them), plus telemetry snapshots and the
 //! valve sources sample by sample. Fixtures from `bun tools/golden/creatures.ts`.
 mod common;
+/// the creatures the fixtures record (the registry's first four); later ones are tested in their own files
+const TS_CREATURES: usize = 4;
 use chimera::creatures::{CREATURES, CreatureTelemetry, CreatureVoice, creature_by_id};
 use chimera::sources::syrinx::SyrinxLabia;
 use chimera::sources::valves::{Bubble, ClickTrain, LipReed, Whistle};
@@ -192,7 +194,8 @@ fn preview_telemetry_serialises_like_typescript() {
         assert_key_order(name, &text, &params);
         seen += 1;
     }
-    assert_eq!(seen, CREATURES.len());
+    // the fixture is the four creatures the TypeScript engine had; later ones have their own tests
+    assert_eq!(seen, TS_CREATURES);
 }
 
 #[test]
@@ -200,7 +203,8 @@ fn defs_serialise_like_typescript() {
     let u = load("creature-units");
     let text = serde_json::to_string(&*CREATURES).unwrap();
     let got: Value = serde_json::from_str(&text).unwrap();
-    assert!(same_json(&got, &u["defs"]), "defs differ\n{got}\n{}", u["defs"]);
+    let ts = Value::Array(got.as_array().unwrap()[..TS_CREATURES].to_vec());
+    assert!(same_json(&ts, &u["defs"]), "defs differ\n{ts}\n{}", u["defs"]);
     assert_key_order("def", &text, &["id", "name", "latin", "group", "blurb", "role", "oversample"]);
 }
 

@@ -23,6 +23,8 @@ usage: chimera <command> [args] [--float]
                  (melody file; midi <= 0 is a rest; --artic also writes the articulators at 100 Hz)
   render beatbox [outdir] [preset name | pattern] [male|female|child] [bpm] [bars]
   render creature [creatureId] [outdir]
+  render creature-notes <creatureId> <in.json> <out> [--tele creature.ctele]
+                 (melody file as for notes: a creature plays each note, shaped as a call; midi <= 0 is a rest)
   render vowels  [male|female|child] [out]
   diagnose       [outdir]
   compare csd    [csd-dir] [outdir] [--songs a|b|all|en001a,…] [--body female] [--jobs n]
@@ -105,6 +107,7 @@ fn run(args: Vec<String>) -> Result<(), String> {
                 "notes" => render::notes(&ctx, rest),
                 "beatbox" => render::beatbox(&ctx, rest),
                 "creature" => render::creature(&ctx, rest),
+                "creature-notes" => render::creature_notes(&ctx, rest),
                 "vowels" => render::vowels(&ctx, rest),
                 _ => Err(format!("unknown render kind {kind:?}\n\n{USAGE}")),
             }

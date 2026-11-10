@@ -450,3 +450,26 @@ fn render_notes_sings_taiwanese_from_tailo_lyrics() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("qxz"));
 }
 
+#[test]
+fn render_creature_notes_records_a_creature_telemetry_file() {
+    let json = tmp("moo.json");
+    std::fs::write(&json, r#"{"bpm": 60, "t0": 0.2, "notes": [[40, 1.5], [0, 0.5]]}"#).unwrap();
+    let (stem, tele) = (tmp("moo"), tmp("moo.ctele"));
+    chimera(&["render", "creature-notes", "buffalo", &json, &stem, "--tele", &tele]);
+    let n = wav_samples(&format!("{stem}.wav")).len();
+    let t = std::fs::read(&tele).unwrap();
+    assert_eq!(&t[0..4], b"CCTL");
+    let u32_at = |i: usize| u32::from_le_bytes([t[i], t[i + 1], t[i + 2], t[i + 3]]) as usize;
+    let (version, rate, hop, frames, len, json_len) = (u32_at(4), u32_at(8), u32_at(12), u32_at(16), u32_at(20), u32_at(24));
+    assert_eq!((version, rate, hop), (1, 48000, 768));
+    assert_eq!(frames, n / 768 + 1);
+    assert_eq!(json_len % 4, 0);
+    assert_eq!(t.len(), 28 + json_len + 4 * frames * len, "the header's frame length says how big the file is");
+    let head = String::from_utf8_lossy(&t[28..28 + json_len]);
+    assert!(head.contains("\"id\":\"buffalo\"") && head.contains("\"mouth\"") && head.contains("\"oral\""), "{head}");
+    // the mouth parameter moves during a moo: the first frame's differs from some later one
+    let f = |i: usize, k: usize| f32::from_le_bytes([t[28 + json_len + 4 * (i * len + k)], t[28 + json_len + 4 * (i * len + k) + 1], t[28 + json_len + 4 * (i * len + k) + 2], t[28 + json_len + 4 * (i * len + k) + 3]]);
+    let mouth_at = 3 + 2; // gate, outRms, clock, then pitch, pressure, mouth
+    let m: Vec<f32> = (0..frames).map(|i| f(i, mouth_at)).collect();
+    assert!(m.iter().cloned().fold(0.0, f32::max) - m.iter().cloned().fold(1.0, f32::min) > 0.3, "the mouth never opens: {m:?}");
+}

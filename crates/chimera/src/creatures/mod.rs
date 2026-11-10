@@ -1,5 +1,6 @@
 //! Non-human creatures: their airways, sources, playable parameters and calls.
 pub mod alligator;
+pub mod buffalo;
 pub mod build;
 pub mod elephant;
 pub mod mammal;
@@ -14,7 +15,7 @@ pub use voice::{CreatureTelemetry, CreatureVoice};
 use std::sync::LazyLock;
 
 /// Creature registry (built once; [`init`] forces it).
-pub static CREATURES: LazyLock<Vec<CreatureDef>> = LazyLock::new(|| vec![songbird::def(), seal::def(), alligator::def(), elephant::def()]);
+pub static CREATURES: LazyLock<Vec<CreatureDef>> = LazyLock::new(|| vec![songbird::def(), seal::def(), alligator::def(), elephant::def(), buffalo::def()]);
 
 pub fn creature_by_id(id: &str) -> Option<&'static CreatureDef> {
     CREATURES.iter().find(|c| c.id == id)

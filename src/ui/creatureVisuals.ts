@@ -70,4 +70,21 @@ export const CREATURE_VISUALS: Record<string, CreatureVisual> = {
     tubeScale: 3,
     sources: [{ key: "glottis", at: [95, 38], label: "Vocal folds" }, { key: "lips", at: [136, 70], label: "Trunk valve" }],
   },
+  "buffalo": {
+    view: { x0: -75, x1: 100, y0: -85, y1: 90 },
+    silhouette: [[-60, -30], [-55, 10], [-40, 35], [-20, 45], [0, 48], [15, 52], [30, 50], [48, 40], [62, 22], [72, 8], [78, -2], [82, -10], [80, -20], [72, -26], [60, -28], [45, -30], [30, -36], [10, -45], [-10, -60], [-40, -70], [-58, -60]],
+    parts: [
+      { shade: 0.7, pts: [[12, 50], [2, 66], [-14, 78], [-30, 76], [-22, 70], [-8, 62], [6, 48]] },
+      { shade: 0.45, pts: [[-4, 44], [-22, 52], [-30, 44], [-14, 36]] },
+      { shade: 0.15, pts: [[44, 30], [47, 32], [50, 30], [47, 28]] },
+    ],
+    tubes: [
+      { tube: "trachea", path: [[-48, -52], [-28, -46], [-6, -40]], label: "Trachea" },
+      { tube: "pharynx", path: [[-6, -40], [6, -30], [18, -20]], label: "Throat" },
+      { tube: "oral", path: [[18, -20], [46, -16], [76, -14]], label: "Mouth" },
+      { tube: "nasal", path: [[20, -8], [44, 6], [76, 0]], label: "Nose" },
+    ],
+    tubeScale: 2.2,
+    sources: [{ key: "glottis", at: [-6, -40], label: "Vocal folds" }],
+  },
 };
