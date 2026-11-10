@@ -18,6 +18,8 @@ import { useEffect, useRef, useState } from "react";
 import { AnatomyView3D, type HeadFeed } from "./AnatomyView3D.tsx";
 import { Screen } from "./Screen.tsx";
 import { TeleTrack } from "../../show/tele.ts";
+import { CreatureTrack } from "../../show/ctele.ts";
+import { CreatureHead3D } from "./CreatureHead3D.tsx";
 import { Transport } from "../../show/transport.ts";
 import { getModel } from "../useModel.ts";
 import { VoiceModel } from "../analysis.ts";
@@ -26,7 +28,7 @@ import type { ViewFlags } from "../render/anatomy.ts";
 import { mouthWords } from "../mouthWords.ts";
 import { V } from "../colors.ts";
 import { g2p } from "../speech.ts";
-import { lyricsToSyllables } from "../../wasm/engine.ts";
+import { creatureById, lyricsToSyllables } from "../../wasm/engine.ts";
 import { sungWords, wordAt, type Melody, type SungWords } from "../../show/words.ts";
 import type { OverlayFn } from "./AnatomyView.tsx";
 
@@ -39,10 +41,15 @@ interface ShowFile {
   voices: { name: string; tele: string; melody?: string }[];
 }
 
+/** a voice: a human head from a `.tele`, or a creature's from a `.ctele` (told apart by the file's first bytes) */
+type LoadedVoice = { name: string; kind: "human"; track: TeleTrack; words: SungWords | null } | { name: string; kind: "creature"; track: CreatureTrack };
+
 interface Loaded {
   show: ShowFile;
-  voices: { name: string; track: TeleTrack; words: SungWords | null }[];
+  voices: LoadedVoice[];
 }
+
+const isCreatureFile = (b: ArrayBuffer) => new TextDecoder().decode(new Uint8Array(b, 0, 4)) === "CCTL";
 
 /** the heads as the face screen shows them by default, less the measurement labels */
 const VIEW: ViewFlags = { pressure: true, particles: true, grid: false, calipers: false };
@@ -89,7 +96,7 @@ export function DuetPage(props: { id: string }) {
           return null;
         }
       });
-      const voices = show.voices.map((v, i) => ({ name: v.name, track: new TeleTrack(teles[i]), words: words[i] }));
+      const voices: LoadedVoice[] = show.voices.map((v, i) => (isCreatureFile(teles[i]) ? { name: v.name, kind: "creature", track: new CreatureTrack(teles[i]) } : { name: v.name, kind: "human", track: new TeleTrack(teles[i]), words: words[i] }));
       await transport.load(audio);
       if (live) setLoaded({ show, voices });
     })().catch((e: unknown) => live && setError(e instanceof Error ? e.message : String(e)));
@@ -124,7 +131,14 @@ export function DuetPage(props: { id: string }) {
         <span className="duet-title">{title}</span>
       </header>
       <main className="duet-heads" style={{ "--voices": loaded?.voices.length ?? 2 } as React.CSSProperties}>
-        {loaded && transport ? loaded.voices.map((v, i) => <Head key={i} name={v.name} track={v.track} words={v.words} show={loaded.show} transport={transport} facing={i > 0 && i === loaded.voices.length - 1 ? -1 : 1} />) : <p className="duet-msg">Loading the song…</p>}
+        {loaded && transport ? (
+          loaded.voices.map((v, i) => {
+            const facing = i > 0 && i === loaded.voices.length - 1 ? -1 : 1;
+            return v.kind === "creature" ? <CreatureHead key={i} name={v.name} track={v.track} transport={transport} facing={facing} /> : <Head key={i} name={v.name} track={v.track} words={v.words} show={loaded.show} transport={transport} facing={facing} />;
+          })
+        ) : (
+          <p className="duet-msg">Loading the song…</p>
+        )}
       </main>
       <footer className="duet-bar">
         <button className="primary large" disabled={!loaded} onClick={() => (st.playing ? transport?.pause() : transport?.play())}>
@@ -181,6 +195,16 @@ function Head(props: { name: string; track: TeleTrack; words: SungWords | null; 
   return (
     <Screen className="duet-head" focus title={props.name} sub={bodyLabel(track.body)} label={`${props.name} voice, ${bodyLabel(track.body)}, in 3D`}>
       <AnatomyView3D feed={feedRef.current} readouts={false} overlay={overlayRef.current} />
+    </Screen>
+  );
+}
+
+/** a creature's head: the same screen, with the animal's name for its sub-title */
+function CreatureHead(props: { name: string; track: CreatureTrack; transport: Transport; facing: 1 | -1 }) {
+  const what = creatureById(props.track.id)?.name ?? props.track.id;
+  return (
+    <Screen className="duet-head" focus title={props.name} sub={what} label={`${props.name}, a ${what}, in 3D`}>
+      <CreatureHead3D track={props.track} transport={props.transport} facing={props.facing} />
     </Screen>
   );
 }

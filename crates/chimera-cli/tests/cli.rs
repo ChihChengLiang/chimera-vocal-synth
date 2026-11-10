@@ -435,6 +435,27 @@ fn wav_samples(path: &str) -> Vec<i16> {
 }
 
 #[test]
+fn render_beatbox_song_puts_the_first_hit_where_asked_and_records_telemetry() {
+    let json = tmp("beat-song.json");
+    std::fs::write(&json, r#"{"bpm": 100, "firstHit": 1.0, "tail": 0.5, "sections": [["B . . .", 1], ["B . . .", 2]]}"#).unwrap();
+    let (stem, tele) = (tmp("beat-song"), tmp("beat-song.tele"));
+    chimera(&["render", "beatbox-song", &json, &stem, "male", "--tele", &tele]);
+    let x = wav_samples(&format!("{stem}.wav"));
+    let peak = x.iter().map(|v| v.unsigned_abs()).max().unwrap();
+    let first = x.iter().position(|v| v.unsigned_abs() > peak / 3).unwrap() as f64 / 48000.0;
+    assert!((first - 1.0).abs() < 0.02, "the first kick sounds at {first} s, not 1.0 s");
+    // four steps of 0.15 s a bar and three bars: the last hit is 1.0 + 2 × 0.6 s; nothing sounds after its tail
+    let end = 1.0 + 3.0 * 0.6 + 0.5;
+    assert!((x.len() as f64 / 48000.0 - end).abs() < 0.01, "{} samples", x.len());
+    // the telemetry: a frame every 768 samples from sample 0, and the header says so
+    let t = std::fs::read(&tele).unwrap();
+    assert_eq!(&t[0..4], b"CHTL");
+    let u32_at = |i: usize| u32::from_le_bytes([t[i], t[i + 1], t[i + 2], t[i + 3]]);
+    assert_eq!((u32_at(8), u32_at(12)), (48000, 768));
+    assert_eq!(u32_at(16) as usize, x.len() / 768 + 1, "frames");
+}
+
+#[test]
 fn render_notes_sings_taiwanese_from_tailo_lyrics() {
     let json = tmp("tailo.json");
     // thinn-kng, one note each: a nasalised vowel after an aspirated stop, then a syllabic velar nasal

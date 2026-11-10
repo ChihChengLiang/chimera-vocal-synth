@@ -579,6 +579,88 @@ pub fn notes(ctx: &Ctx, a: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// `render beatbox-song <in.json> <out> [body] [--tele voice.tele]`: several patterns one after
+/// another on one voice, the first hit of the first at `firstHit` seconds and each next pattern's
+/// first hit exactly where the one before ends (so beats and a mix made on a grid line up). Before
+/// `firstHit` the voice is silent; `--tele` records it from sample 0, for a duet page's head.
+pub fn beatbox_song(ctx: &Ctx, a: &[String]) -> Result<(), String> {
+    let mut tele_out: Option<String> = None;
+    let mut rest = Vec::new();
+    let mut it = a.iter();
+    while let Some(x) = it.next() {
+        if x == "--tele" {
+            tele_out = Some(it.next().ok_or("--tele needs a file")?.clone());
+        } else {
+            rest.push(x.clone());
+        }
+    }
+    let a = &rest[..];
+    let input = a.first().ok_or("render beatbox-song <in.json> <out> [male|female|child] [--tele voice.tele]")?;
+    let out_name = wav_name(arg(a, 1, "out/beatbox-song"));
+    let body_name = arg(a, 2, "male");
+    let b = body(body_name)?;
+    let text = std::fs::read_to_string(input).map_err(|e| format!("{input}: {e}"))?;
+    let j: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!("{input}: {e}"))?;
+    let bpm = j["bpm"].as_f64().ok_or("bpm missing")?;
+    let swing = j["swing"].as_f64().unwrap_or(0.0);
+    let first_hit = j["firstHit"].as_f64().ok_or("firstHit missing")?;
+    let tail = j["tail"].as_f64().unwrap_or(0.8);
+    let sections: Vec<(Vec<Option<BeatStep>>, f64)> = j["sections"]
+        .as_array()
+        .ok_or("sections missing")?
+        .iter()
+        .map(|s| Ok((parse_beat(s[0].as_str().ok_or("a section is [\"pattern\", reps]")?), s[1].as_f64().ok_or("a section is [\"pattern\", reps]")?)))
+        .collect::<Result<_, String>>()?;
+    let mut seq = BeatPlayer::new();
+    seq.body = body_name.into();
+    seq.set_tempo(bpm, swing);
+    let step = seq.step_dur();
+    // where each section's first hit falls, and where the last one ends
+    let mut starts = Vec::new();
+    let mut at = first_hit;
+    for (steps, reps) in &sections {
+        starts.push(at);
+        at += reps * steps.len().min(BeatPlayer::MAX_STEPS) as f64 * step;
+    }
+    let end = at;
+    let mut v = HumanVoice::new(FS, b, 2);
+    v.set_articulation(&beat_ready(body_name.into()), None);
+    v.set_source(&SourcePatch { f0: Some(100.0), voiced: Some(true), pressure: Some(8.0), ..Default::default() });
+    v.set_gate(0.0);
+    let total = js_round((end + tail) * FS) as usize;
+    let mut out = vec![0f32; total];
+    let mut rec = if tele_out.is_some() { Some(TeleRecorder::new(&mut v)) } else { None };
+    let (mut k, mut stopped) = (0usize, false);
+    for (bi, block) in out.chunks_mut(128).enumerate() {
+        let clock = v.clock;
+        // a section begins when its first hit comes within the sequencer's horizon; the last ends it
+        while k < sections.len() && clock >= starts[k] - BeatPlayer::HORIZON {
+            seq.set_steps(&sections[k].0);
+            seq.start(starts[k] - BeatPlayer::HORIZON);
+            k += 1;
+        }
+        if !stopped && k == sections.len() && clock >= end - BeatPlayer::HORIZON {
+            seq.stop();
+            stopped = true;
+        }
+        seq.tick(clock, &mut |gs: &[Gesture]| v.schedule(gs));
+        v.render(block);
+        if let Some(r) = rec.as_mut()
+            && block.len() == 128
+            && (bi + 1) * 128 % TELE_HOP == 0
+        {
+            r.snap(&mut v)?;
+        }
+    }
+    ctx.write_wav(&out_name, &out)?;
+    println!("{out_name}: {} s, peak {}, first hit at {first_hit} s, ends {} s", fixed(total as f64 / FS, 2), fixed(peak(&out), 3), fixed(end, 2));
+    if let (Some(path), Some(r)) = (&tele_out, rec) {
+        std::fs::write(path, r.bytes(body_mix(body_name)?)).map_err(|e| format!("{path}: {e}"))?;
+        println!("{path}: {} telemetry frames every {TELE_HOP} samples", r.frames);
+    }
+    Ok(())
+}
+
 /// The beatbox kit, each sound alone, and a preset pattern through the sequencer.
 /// `render beatbox [outdir] [preset name | pattern] [body] [bpm] [bars]`
 pub fn beatbox(ctx: &Ctx, a: &[String]) -> Result<(), String> {
