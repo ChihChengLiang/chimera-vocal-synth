@@ -21,6 +21,8 @@ import { TeleTrack } from "../../show/tele.ts";
 import { CreatureTrack } from "../../show/ctele.ts";
 import { CreatureHead3D } from "./CreatureHead3D.tsx";
 import { Transport } from "../../show/transport.ts";
+import { ManualClock, type Clock } from "../../show/clock.ts";
+import { parseSubtitles, subtitleAt, type Subtitle } from "../../show/subtitles.ts";
 import { getModel } from "../useModel.ts";
 import { VoiceModel } from "../analysis.ts";
 import { bodyLabel } from "../body.ts";
@@ -38,6 +40,10 @@ interface ShowFile {
   bpm?: number;
   downbeat?: number;
   spell?: Record<string, string>;
+  /** a file of timed lines (`src/show/subtitles.ts`), shown under the heads */
+  subtitles?: string;
+  /** a font file for the subtitles' Han line (the page's own fonts have no Han glyphs; a system font stands in without it) */
+  subtitleFont?: string;
   voices: { name: string; tele: string; melody?: string }[];
 }
 
@@ -47,7 +53,11 @@ type LoadedVoice = { name: string; kind: "human"; track: TeleTrack; words: SungW
 interface Loaded {
   show: ShowFile;
   voices: LoadedVoice[];
+  subs: Subtitle[];
 }
+
+/** `?capture`: no audio and no controls, a clock the recorder sets (`window.__duet.set(t)`), for tools/record-duet.ts */
+const CAPTURE = typeof location !== "undefined" && new URLSearchParams(location.search).has("capture");
 
 const isCreatureFile = (b: ArrayBuffer) => new TextDecoder().decode(new Uint8Array(b, 0, 4)) === "CCTL";
 
@@ -65,13 +75,13 @@ const clock = (t: number) => `${Math.floor(t / 60)}:${String(Math.floor(t % 60))
 export function DuetPage(props: { id: string }) {
   const base = `${import.meta.env.BASE_URL}shows/${props.id}/`;
   // one transport per mount (its context closes on unmount)
-  const [transport, setTransport] = useState<Transport | null>(null);
+  const [transport, setTransport] = useState<Clock | null>(null);
   const [loaded, setLoaded] = useState<Loaded | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [, setTick] = useState(0);
 
   useEffect(() => {
-    const t = new Transport();
+    const t: Clock = CAPTURE ? new ManualClock() : new Transport();
     setTransport(t);
     return () => t.dispose();
   }, []);
@@ -98,7 +108,12 @@ export function DuetPage(props: { id: string }) {
       });
       const voices: LoadedVoice[] = show.voices.map((v, i) => (isCreatureFile(teles[i]) ? { name: v.name, kind: "creature", track: new CreatureTrack(teles[i]) } : { name: v.name, kind: "human", track: new TeleTrack(teles[i]), words: words[i] }));
       await transport.load(audio);
-      if (live) setLoaded({ show, voices });
+      if (show.subtitleFont) {
+        const face = new FontFace("ShowHan", `url(${base + show.subtitleFont})`);
+        document.fonts.add(await face.load());
+      }
+      const subs = show.subtitles ? parseSubtitles(await (await fetchOk(base + show.subtitles)).json()) : [];
+      if (live) setLoaded({ show, voices, subs });
     })().catch((e: unknown) => live && setError(e instanceof Error ? e.message : String(e)));
     return () => {
       live = false;
@@ -116,6 +131,14 @@ export function DuetPage(props: { id: string }) {
     };
   }, [transport]);
 
+  // the recorder's handle: set the playhead, and say when the heads and the lines are loaded
+  useEffect(() => {
+    if (!CAPTURE || !transport || !loaded) return;
+    const clock = transport as ManualClock;
+    (window as unknown as { __duet: unknown }).__duet = { ready: true, set: (t: number) => clock.set(t), setDuration: (d: number) => clock.setDuration(d) };
+    return () => void delete (window as unknown as { __duet?: unknown }).__duet;
+  }, [transport, loaded]);
+
   if (error)
     return (
       <div className="duet">
@@ -125,7 +148,7 @@ export function DuetPage(props: { id: string }) {
   const st = transport?.state ?? { playing: false, time: 0, duration: 0, epoch: 0 };
   const title = loaded?.show.title ?? "Loading…";
   return (
-    <div className="duet">
+    <div className={CAPTURE ? "duet capture" : "duet"}>
       <header className="duet-top">
         <span className="wordmark">Chimera</span>
         <span className="duet-title">{title}</span>
@@ -140,6 +163,7 @@ export function DuetPage(props: { id: string }) {
           <p className="duet-msg">Loading the song…</p>
         )}
       </main>
+      {loaded && loaded.subs.length > 0 && transport && <Subtitles subs={loaded.subs} clock={transport} />}
       <footer className="duet-bar">
         <button className="primary large" disabled={!loaded} onClick={() => (st.playing ? transport?.pause() : transport?.play())}>
           {st.playing ? "Pause" : st.duration > 0 && st.time >= st.duration - 0.05 ? "Again" : "Play"}
@@ -164,7 +188,7 @@ export function DuetPage(props: { id: string }) {
 }
 
 /** one voice's head; the last of several turns to face the others */
-function Head(props: { name: string; track: TeleTrack; words: SungWords | null; show: ShowFile; transport: Transport; facing: 1 | -1 }) {
+function Head(props: { name: string; track: TeleTrack; words: SungWords | null; show: ShowFile; transport: Clock; facing: 1 | -1 }) {
   const { track, show, transport, words } = props;
   const feedRef = useRef<HeadFeed | null>(null);
   // the syllable at the mouth, written on the side the face looks to
@@ -200,11 +224,36 @@ function Head(props: { name: string; track: TeleTrack; words: SungWords | null; 
 }
 
 /** a creature's head: the same screen, with the animal's name for its sub-title */
-function CreatureHead(props: { name: string; track: CreatureTrack; transport: Transport; facing: 1 | -1 }) {
+function CreatureHead(props: { name: string; track: CreatureTrack; transport: Clock; facing: 1 | -1 }) {
   const what = creatureById(props.track.id)?.name ?? props.track.id;
   return (
     <Screen className="duet-head" focus title={props.name} sub={what} label={`${props.name}, a ${what}, in 3D`}>
       <CreatureHead3D track={props.track} transport={props.transport} facing={props.facing} />
     </Screen>
+  );
+}
+
+/** the line sung now, in Han characters and in Tâi-lô; it follows the playhead every frame, not the page's slower readout tick */
+function Subtitles(props: { subs: Subtitle[]; clock: Clock }) {
+  const [line, setLine] = useState<Subtitle | null>(null);
+  const last = useRef<Subtitle | null>(null);
+  useEffect(() => {
+    let raf = 0;
+    const tick = () => {
+      const now = subtitleAt(props.subs, props.clock.time());
+      if (now !== last.current) {
+        last.current = now;
+        setLine(now);
+      }
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [props.subs, props.clock]);
+  return (
+    <div className="duet-subs" lang="nan-Hant-TW" role="status" aria-live="off">
+      <div className="duet-sub-han">{line?.han ?? "\u00a0"}</div>
+      <div className="duet-sub-tailo" lang="nan-Latn-TW">{line?.tailo ?? "\u00a0"}</div>
+    </div>
   );
 }

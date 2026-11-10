@@ -8,9 +8,9 @@ import * as THREE from "three";
 import { Buffalo3D } from "../render/buffalo3d.ts";
 import { Glow } from "../render/vector.ts";
 import type { CreatureTrack } from "../../show/ctele.ts";
-import type { Transport } from "../../show/transport.ts";
+import type { Clock } from "../../show/clock.ts";
 
-export function CreatureHead3D(props: { track: CreatureTrack; transport: Transport; facing: 1 | -1 }) {
+export function CreatureHead3D(props: { track: CreatureTrack; transport: Clock; facing: 1 | -1 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const [failed, setFailed] = useState(false);

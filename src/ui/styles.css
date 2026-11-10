@@ -2783,7 +2783,7 @@ input[type="range"]::-moz-range-thumb {
 /* ---------- the duet page (?show=<id>): heads side by side over the transport */
 .duet {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
   gap: 8px;
   height: 100vh;
   height: 100dvh;
@@ -2818,6 +2818,41 @@ input[type="range"]::-moz-range-thumb {
 
 .duet-head .screen-body {
   min-height: 180px;
+}
+
+.duet-subs {
+  /* a fixed height, so the heads don't move as lines come and go */
+  min-height: 4.6em;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 2px;
+  padding: 2px 8px;
+  text-align: center;
+  font-family: "Archivo", "Noto Sans TC", "PingFang TC", "Hiragino Sans CNS", system-ui, sans-serif;
+}
+
+.duet-sub-han {
+  font-family: "ShowHan", "Noto Sans TC", "PingFang TC", "Hiragino Sans CNS", sans-serif;
+  font-size: clamp(20px, 3.4vw, 44px);
+  line-height: 1.25;
+  letter-spacing: 0.08em;
+  color: var(--white, #eef6f8);
+}
+
+.duet-sub-tailo {
+  font-size: clamp(13px, 2.1vw, 26px);
+  line-height: 1.3;
+  letter-spacing: 0.03em;
+  color: var(--amber, #ffb340);
+}
+
+/* ?capture: the recorder's view, heads and lines only */
+.duet.capture {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+.duet.capture .duet-bar {
+  display: none;
 }
 
 .duet-bar {
