@@ -16,7 +16,7 @@
 //! thread. Call [`init`] first so the phoneme tables are parsed off it.
 
 use super::inventory::phoneme;
-use super::planner::{oral_gestures_into, vowel_artic};
+use super::planner::{artic_targets, oral_gestures_into, vowel_artic};
 use crate::anatomy::human::{ArticKey, ArticPatch, BodyMix};
 use crate::control::score::{ControlKey, Gesture, Label, Targets};
 use crate::math::{js_max, js_min};
@@ -268,7 +268,60 @@ fn hum(body: BodyMix, o: &BeatBuild, out: &mut Vec<Gesture>) {
     out.push(g(-0.02, end, 0.015, 0.02, 8.0, tg(&[(ControlKey::F0, o.f0)]), "m", None));
 }
 
-pub static BEAT_SOUNDS: [BeatSound; 10] = [
+// ---- sounds from Taiwanese Hokkien's phonology: what it contrasts and English leaves to chance
+
+/// [tsʰ]: the aspirated affricate of 出 tshut and 赤 tshiah: a tongue-tip closure, then a long
+/// hiss that carries a burst of breath (English "ts" is short and unaspirated).
+fn tsh(body: BodyMix, o: &BeatBuild, out: &mut Vec<Gesture>) {
+    let end = js_max(0.07, js_min(0.11, o.len * 0.8));
+    let s = oral(body, "t", -0.05, 0.0, 2.0, "tsh", &[(Jaw, 0.3)], out);
+    snap(&mut out[s..], 3.5, 0.01);
+    let s = oral(body, "s", 0.01, end, 1.5, "tsh", &[], out);
+    after(&mut out[s..], 0.008);
+    blow(-0.035, end, 1.55 * o.accent, 0.5, "tsh", 0.05, out);
+}
+
+/// [pʰ]: the lips burst and the breath keeps coming through the open lips, with no second
+/// constriction: a soft, breathy snare. (Its unaspirated twin [p] is the kick.)
+fn aspirated_p(body: BodyMix, o: &BeatBuild, out: &mut Vec<Gesture>) {
+    let s = oral(body, "p", -0.06, 0.0, 2.0, "ph", &[], out);
+    snap(&mut out[s..], 3.5, 0.01);
+    blow(-0.045, 0.085, 1.45 * o.accent, 0.55, "ph", 0.05, out);
+}
+
+/// [ʔ]: the glottal stop that ends a checked syllable (著 tio̍h, 熱 jua̍h): the folds seal while
+/// the lungs build pressure behind them, then spring open: a cough-like tick through an open mouth.
+fn glottal_tick(body: BodyMix, o: &BeatBuild, out: &mut Vec<Gesture>) {
+    // the mouth held open on a schwa, so the released air has somewhere to go
+    let open = vowel_artic("ə", body).unwrap_or_default();
+    out.push(g(-0.07, 0.03, 0.02, 0.03, 3.0, artic_targets(&open), "ʔ", None));
+    out.push(g(-0.065, 0.0, 0.01, 0.012, 8.0, tg(&[(ControlKey::CLOSURE, 1.0)]), "ʔ", None));
+    blow(-0.05, 0.03, 2.2 * o.accent, 0.5, "ʔ", 0.02, out);
+}
+
+/// A sustained nasalised vowel, [ãⁿ] (as in 山 suann): the mouth open on /a/, the velum down, the
+/// voice on. Held where the hum is shut; it is the same bass with its mouth open.
+fn nasal_vowel(body: BodyMix, o: &BeatBuild, out: &mut Vec<Gesture>) {
+    let end = js_max(0.06, o.len * 0.92);
+    let a_ = vowel_artic("a", body).unwrap_or_default();
+    out.push(g(-0.04, end, 0.03, 0.04, 2.0, artic_targets(&a_), "aⁿ", None));
+    out.push(g(-0.04, end, 0.03, 0.03, 4.0, tg(&[(a(ArticKey::Velum), 0.5)]), "aⁿ", None));
+    out.push(g(-0.01, end, 0.02, 0.04, 1.0, tg(&[(ControlKey::BREATH, 0.95 * o.accent)]), "aⁿ", None));
+    out.push(g(-0.02, end, 0.015, 0.02, 8.0, tg(&[(ControlKey::F0, o.f0)]), "aⁿ", None));
+}
+
+/// The syllabic velar nasal [ŋ̍] (毋 m̄, 光 kng): a hum made with the back of the tongue instead of
+/// the lips, darker than [m].
+fn velar_hum(body: BodyMix, o: &BeatBuild, out: &mut Vec<Gesture>) {
+    let end = js_max(0.06, o.len * 0.92);
+    oral(body, "ŋ", -0.03, end, 1.6, "ŋ", &[], out);
+    out.push(g(-0.02, end, 0.03, 0.03, 4.0, tg(&[(a(ArticKey::Velum), 0.9)]), "ŋ", None));
+    out.push(g(-0.08, -0.03, 0.02, 0.02, 5.0, tg(&[(ControlKey::ABDUCTION, 0.3)]), "ŋ", None));
+    out.push(g(-0.01, end, 0.02, 0.04, 1.0, tg(&[(ControlKey::BREATH, 0.95 * o.accent)]), "ŋ", None));
+    out.push(g(-0.02, end, 0.015, 0.02, 8.0, tg(&[(ControlKey::F0, o.f0)]), "ŋ", None));
+}
+
+pub static BEAT_SOUNDS: [BeatSound; 15] = [
     BeatSound { id: "B", name: "Kick", role: BeatRole::Kick, airstream: Airstream::Ejective, hint: "Lips burst on air the rising larynx compresses", latency: 0.01, build: kick },
     BeatSound { id: "t", name: "Hi-hat", role: BeatRole::Hat, airstream: Airstream::Pulmonic, hint: "Tongue-tip release into a short hiss", latency: -0.005, build: hat },
     BeatSound { id: "tss", name: "Open hat", role: BeatRole::Hat, airstream: Airstream::Pulmonic, hint: "The hi-hat left ringing as a long hiss", latency: -0.005, build: open_hat },
@@ -279,6 +332,11 @@ pub static BEAT_SOUNDS: [BeatSound; 10] = [
     BeatSound { id: "P!", name: "Lip pop", role: BeatRole::Perc, airstream: Airstream::Click, hint: "Sealed lips, the jaw drops, the lips pop open", latency: -0.001, build: lip_pop },
     BeatSound { id: "kch", name: "Crash", role: BeatRole::Hat, airstream: Airstream::Pulmonic, hint: "Back-of-tongue release into a long rounded hiss", latency: -0.013, build: crash },
     BeatSound { id: "m", name: "Hum", role: BeatRole::Bass, airstream: Airstream::Voiced, hint: "Hummed bass note through the nose", latency: 0.0056, build: hum },
+    BeatSound { id: "tsh", name: "Aspirated hat", role: BeatRole::Hat, airstream: Airstream::Pulmonic, hint: "Hokkien tsh: a tongue-tip closure into a hiss that carries a burst of breath", latency: -0.0003, build: tsh },
+    BeatSound { id: "ph", name: "Breath snare", role: BeatRole::Snare, airstream: Airstream::Pulmonic, hint: "Hokkien ph: the lips burst and the breath keeps coming", latency: 0.0129, build: aspirated_p },
+    BeatSound { id: "?", name: "Glottal tick", role: BeatRole::Perc, airstream: Airstream::Ejective, hint: "Hokkien final h: the glottis seals and the lungs push, then it springs open: a dry tick", latency: 0.0094, build: glottal_tick },
+    BeatSound { id: "ann", name: "Nasal vowel", role: BeatRole::Bass, airstream: Airstream::Voiced, hint: "Hokkien nasalised vowel: a bass held on an open, nasal a", latency: 0.003, build: nasal_vowel },
+    BeatSound { id: "ng", name: "Velar hum", role: BeatRole::Bass, airstream: Airstream::Voiced, hint: "Hokkien syllabic ng: a hum with the back of the tongue", latency: -0.0389, build: velar_hum },
 ];
 
 /// The sound with this pattern symbol (no allocation).
@@ -385,7 +443,7 @@ pub struct BeatPreset {
     pub text: &'static str,
 }
 
-pub static BEAT_PRESETS: [BeatPreset; 7] = [
+pub static BEAT_PRESETS: [BeatPreset; 8] = [
     BeatPreset { name: "Boots and cats", bpm: 96.0, swing: 0.0, text: "B . t . | Pf . t . | B . t . | Pf . t ." },
     BeatPreset { name: "Four on the floor", bpm: 122.0, swing: 0.0, text: "B . t . | B . tss . | B . t . | B . tss ." },
     BeatPreset { name: "Breakbeat", bpm: 94.0, swing: 0.18, text: "B . t . | Pf . t B | . B t . | Pf . t t" },
@@ -393,4 +451,5 @@ pub static BEAT_PRESETS: [BeatPreset; 7] = [
     BeatPreset { name: "Inward snare", bpm: 100.0, swing: 0.0, text: "B . t . | ^K . t . | B B t . | ^K . t ." },
     BeatPreset { name: "Clicks and pops", bpm: 90.0, swing: 0.25, text: "B . ! . | P! . ! . | B ! . ! | P! . ! !" },
     BeatPreset { name: "Hum bass", bpm: 92.0, swing: 0.1, text: "B m . m:43 | Pf . m:45 . | B m:40 . m | Pf . t kch" },
+    BeatPreset { name: "Tâi-gí groove", bpm: 100.0, swing: 0.12, text: "B . tsh . | ph . ? tsh | B ? tsh ng:38 | ph . ? ann:45" },
 ];

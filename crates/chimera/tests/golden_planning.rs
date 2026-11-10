@@ -215,6 +215,10 @@ fn live_notes_match_typescript() {
     report("notes", &st);
 }
 
+/// the beat sounds and presets the fixtures record (the lists' first ten and seven)
+const TS_SOUNDS: usize = 10;
+const TS_PRESETS: usize = 7;
+
 #[test]
 fn beat_sounds_match_typescript() {
     let mut f = load("planning");
@@ -222,8 +226,9 @@ fn beat_sounds_match_typescript() {
     let bless_it = blessing();
     let mut cmp = |path: &str, want: &mut Value, got: Value, st: &mut Stats| if bless_it { *want = got } else { cmp(path, want, &got, st) };
     let sounds = f["sounds"].as_array_mut().unwrap();
-    assert_eq!(sounds.len(), BEAT_SOUNDS.len());
-    for (s, want) in BEAT_SOUNDS.iter().zip(sounds) {
+    // the fixture is the ten sounds the TypeScript engine had; later ones are tested in tests/beatbox.rs
+    assert_eq!(sounds.len(), TS_SOUNDS);
+    for (s, want) in BEAT_SOUNDS.iter().take(TS_SOUNDS).zip(sounds) {
         // the catalogue the UI receives
         let mut meta = want.as_object().unwrap().clone();
         meta.remove("builds");
@@ -259,7 +264,7 @@ fn beat_notation_matches_typescript() {
     let f = load("planning");
     let mut st = Stats::default();
     let n = &f["notation"];
-    cmp("presets", &n["presets"], &val(&BEAT_PRESETS), &mut st);
+    cmp("presets", &n["presets"], &val(&BEAT_PRESETS[..TS_PRESETS].to_vec()), &mut st);
     for t in n["texts"].as_array().unwrap() {
         let steps = parse_beat(t["text"].as_str().unwrap());
         cmp(&format!("parse {:?}", t["text"]), &t["steps"], &val(&steps), &mut st);

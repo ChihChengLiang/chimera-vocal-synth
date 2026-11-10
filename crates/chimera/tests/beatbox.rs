@@ -140,3 +140,12 @@ fn after_the_voice_is_replaced_steps_not_yet_heard_are_scheduled_again_at_their_
         assert!(close(again[i].t, *t, 9));
     }
 }
+
+#[test]
+fn the_hokkien_sounds_have_pattern_symbols() {
+    let s = parse_beat("tsh ph ? ann:45 ng:38 .");
+    let want: Vec<Option<String>> = [Some("tsh"), Some("ph"), Some("?"), Some("ann"), Some("ng"), None].iter().map(|x| x.map(String::from)).collect();
+    assert_eq!(ids(&s), want);
+    assert_eq!(s[3].unwrap().note, Some(45.0));
+    assert_eq!(s[4].unwrap().note, Some(38.0));
+}
